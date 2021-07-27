@@ -10,6 +10,10 @@
 //
 // licensed under CC BY-NC-SA
 //
+// version: V1.4
+// last update: 27.07.2021
+// added web config interface 
+//
 // version: V1.3
 // last update: 27.08.2020
 // change history
@@ -30,8 +34,8 @@
 // first released version
 
 // SET HW version
-#define T_BEAM_V1_0    // use this for newer Boards AKA Rev1 (second board release)
-// #define T_BEAM_V0_7    // use this for older Boards AKA Rev0.x (first board release)
+// #define T_BEAM_V1_0    // use this for newer Boards AKA Rev1 (second board release)
+#define T_BEAM_V0_7    // use this for older Boards AKA Rev0.x (first board release)
 
 // SET temperature sensor type
 // #define DS18B20    // use this if you use DS18B20, default is DHT22
@@ -47,6 +51,7 @@
 #define WX_CALLSIGN "XX9XXX-11"  // use same callsign but you can use different SSID
 #define LONGITUDE_PRESET "01539.85E" // please in APRS notation DDDMM.mmE or DDDMM.mmW
 #define LATIDUDE_PRESET "4813.62N"   // please in APRS notation DDMM.mmN or DDMM.mmS
+#define APRS_TABLE "/"          // "/" => primary table, "\" => alternate table, ... => overlay
 #define APRS_SYMBOL ">"         // other symbols are
                                 // "_" => Weather Station
                                 // ">" => CAR
@@ -54,12 +59,14 @@
                                 // "b" => BICYCLE
                                 // "<" => MOTORCYCLE
                                 // "R" => Recreation Vehicle
-// #define HW_COMMENT              // send Alt und Battery Voltage, UNcomment if you want to send it
+#define SEND_ALT	1	// send altitude, set to 0 if you do not want to send it
+#define SEND_BATT	0	// send Battery voltage, set to 1 if you want to send it
+
 #define MY_COMMENT "" // add your coment here - if empty then no comment is sent
 // #define MY_COMMENT "TTGO by OE3CJB" // add your coment here - if empty then no comment is sent
 
 // TRANSMIT INTERVAL
-unsigned long max_time_to_nextTX = 180000L;   // set here MAXIMUM time in ms(!) for smart beaconing - minimum time is always 1 min = 60 secs = 60000L !!!
+unsigned long max_time_to_nextTX = 60000L;   // set here MAXIMUM time in ms(!) for smart beaconing - minimum time is always 1 min = 60 secs = 60000L !!!
                                 // when entering 60000L intervall is fixed to 1 min
 
 // show RX values

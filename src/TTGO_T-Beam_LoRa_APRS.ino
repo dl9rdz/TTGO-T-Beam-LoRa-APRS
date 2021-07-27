@@ -68,6 +68,14 @@
 #include <gfxfont.h>
 #include <axp20x.h>
 
+#include <WiFi.h>
+#include <ESPAsyncWebServer.h>
+#include <ESPmDNS.h>
+#include <DNSServer.h>
+
+AsyncWebServer server(80);
+DNSServer dnsServer;
+
 //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 //PINs used for HW extensions
 
@@ -169,9 +177,13 @@ const byte RX_en  = 0;       //TX/RX enable 1W modul
 // Variables for APRS packaging
 String Tcall;                //your Call Sign for normal position reports
 String wxTcall;              //your Call Sign for weather reports
-String sTable="/";           //Primer
+String TxSymbol="";		// TXSymbol contains now table ID and symbol code (2 chars)
 String wxTable="/";          //Primer
 String wxSymbol="_";         //Symbol Code Weather Station
+
+String MyComment;
+uint8_t SendAlt = 1;
+uint8_t SendBatt = 0;
 
 // Tracker setting: use these lines to modify the tracker behaviour
 #define TXFREQ  433.775      // Transmit frequency in MHz
@@ -191,7 +203,6 @@ String LatShown="";
 String LongFixed="";
 String LatFixed="";
 
-String TxSymbol="";
 
 boolean wx;
 
@@ -342,17 +353,23 @@ void setup()
   wxTcall = prefs.getString("wxTcall", WX_CALLSIGN);
   LongFixed = prefs.getString("LongFixed", LONGITUDE_PRESET);
   LatFixed = prefs.getString("LatFixed", LATIDUDE_PRESET);
-  TxSymbol = prefs.getString("TxSymbol", APRS_SYMBOL);
+  TxSymbol = prefs.getString("TxSymbol", APRS_TABLE APRS_SYMBOL);
+  MyComment = prefs.getString("MyComment", MY_COMMENT);
+  SendAlt = prefs.getChar("SendAlt", SEND_ALT);
+  SendBatt = prefs.getChar("SendBatt", SEND_BATT);
   prefs.end();
   #else
   Tcall = CALLSIGN;
   wxTcall = WX_CALLSIGN;
   LongFixed = LONGITUDE_PRESET;
   LatFixed = LATIDUDE_PRESET;
-  TxSymbol = APRS_SYMBOL;
+  TxSymbol = APRS_TABLE APRS_SYMBOL;
+  MyComment = MY_COMMENT;
+  SendAlt = SEND_ALT;
+  SendBatt = SEND_BATT;
   #endif
 
-  Serial.println("LoRa-APRS / Call="+Tcall+" / WX-Call="+wxTcall+" / TxSymbol="+TxSymbol);
+  Serial.println("LoRa-APRS / Call="+Tcall+" / WX-Call="+wxTcall+" / TxSymbol="+TxSymbol+" / SendAlt="+SendAlt+" / SendBatt="+SendBatt+" / Comment="+MyComment);
 
   int start_button_pressed = millis();
 
@@ -920,7 +937,7 @@ switch(tracker_mode) {
     #else
       outString += "b.....";
     #endif
-    outString += MY_COMMENT;
+    outString += MyComment;
     break;
   case WX_TRACKER:
     if (wx) {
@@ -1005,7 +1022,7 @@ switch(tracker_mode) {
       #else
         outString += "b.....";
       #endif
-      outString += MY_COMMENT;
+      outString += MyComment;
       wx = !wx;
     } else {
       #ifndef TX_BASE91
@@ -1019,12 +1036,12 @@ switch(tracker_mode) {
         if(Tlat<10) {outString += "0"; }
         outString += String(Lat,2);
         outString += Ns;
-        outString += sTable;
+        outString += TxSymbol[0];
         if(Tlon<100) {outString += "0"; }
         if(Tlon<10) {outString += "0"; }
         outString += String(Lon,2);
         outString += Ew;
-        outString += TxSymbol;
+        outString += TxSymbol[1];
       #else
         for (i=0; i<Tcall.length();++i){  // remove unneeded "spaces" from callsign field
           if (Tcall.charAt(i) != ' ') {
@@ -1032,7 +1049,8 @@ switch(tracker_mode) {
           }
         }
         // outString = (Tcall);
-        outString += ">APRS:!/";
+        outString += ">APRS:!";
+        outString += TxSymbol[0];
         ax25_base91enc(helper_base91, 4, aprs_lat);
         for (i=0; i<4; i++) {
           outString += helper_base91[i];
@@ -1041,7 +1059,7 @@ switch(tracker_mode) {
         for (i=0; i<4; i++) {
           outString += helper_base91[i];
         }
-        outString += TxSymbol;
+        outString += TxSymbol[1];
         ax25_base91enc(helper_base91, 1, (uint32_t) Tcourse/4 );
         outString += helper_base91[0];
         ax25_base91enc(helper_base91, 1, (uint32_t) (log1p(Tspeed)/0.07696));
@@ -1049,14 +1067,16 @@ switch(tracker_mode) {
         outString += "\x48";
       #endif
 
-      #ifdef HW_COMMENT
+      if(SendAlt) {
         outString += "/A=";
         outString += Altx;
+      }
+      if(SendBatt) {
         outString += " Batt=";
         outString += String(BattVolts,2);
         outString += ("V");
-      #endif
-      outString += MY_COMMENT;
+      }
+      outString += MyComment;
       wx = !wx;
     }
   break;
@@ -1144,7 +1164,7 @@ case WX_MOVE:
     #else
       outString += "b.....";
     #endif
-    outString += MY_COMMENT;
+    outString += MyComment;
     break;
   case TRACKER:
   default:
@@ -1159,12 +1179,12 @@ case WX_MOVE:
       if(Tlat<10) {outString += "0"; }
       outString += String(Lat,2);
       outString += Ns;
-      outString += sTable;
+      outString += TxSymbol[0];
       if(Tlon<100) {outString += "0"; }
       if(Tlon<10) {outString += "0"; }
       outString += String(Lon,2);
       outString += Ew;
-      outString += TxSymbol;
+      outString += TxSymbol[1];
       if(Tcourse<100) {outString += "0"; }
       if(Tcourse<10) {outString += "0"; }
       Coursex = String(Tcourse,0);
@@ -1176,14 +1196,16 @@ case WX_MOVE:
       Speedx = String(Tspeed,0);
       Speedx.replace(" ","");
       outString += Speedx;
-      #ifdef HW_COMMENT
+      if(SendAlt) {
         outString += "/A=";
         outString += Altx;
+      }
+      if(SendBatt) {
         outString += " Batt=";
         outString += String(BattVolts,2);
         outString += ("V");
-      #endif
-      outString += MY_COMMENT;
+      }
+      outString += MyComment;
       #ifdef DEBUG
         outString += (" Debug: ");
         outString += TxRoot;
@@ -1195,7 +1217,8 @@ case WX_MOVE:
         }
       }
       // outString = (Tcall);
-      outString += ">APRS:!/";
+      outString += ">APRS:!";
+      outString += TxSymbol[0];
       ax25_base91enc(helper_base91, 4, aprs_lat);
       for (i=0; i<4; i++) {
         outString += helper_base91[i];
@@ -1204,20 +1227,22 @@ case WX_MOVE:
       for (i=0; i<4; i++) {
         outString += helper_base91[i];
       }
-      outString += TxSymbol;
+      outString += TxSymbol[1];
       ax25_base91enc(helper_base91, 1, (uint32_t) Tcourse/4 );
       outString += helper_base91[0];
       ax25_base91enc(helper_base91, 1, (uint32_t) (log1p(Tspeed)/0.07696));
       outString += helper_base91[0];
       outString += "\x48";
-      #ifdef HW_COMMENT
+      if(SendAlt) {
         outString += "/A=";
         outString += Altx;
+      }
+      if(SendBatt) {
         outString += " Batt=";
         outString += String(BattVolts,2);
         outString += ("V");
-      #endif
-      outString += MY_COMMENT;
+      }
+      outString += MyComment;
     #endif
     Serial.print("outString=");
     // Speedx = String(Tspeed,0);
@@ -1327,6 +1352,11 @@ void writedisplaytext(String HeaderTxt, String Line1, String Line2, String Line3
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////
+void dobgstuff() {
+    dnsServer.processNextRequest();
+    yield();
+}
+
 void setup_data(void) {
   char werte_call[37] = {' ','A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z','1','2','3','4','5','6','7','8','9','0'};
   String werte_SSID[16] = {"0","1","2","3","4","5","6","7","8","9","10","11","12","13","14","15"};
@@ -1343,16 +1373,17 @@ void setup_data(void) {
   int8_t pos_letter;
   String pfeile = "^";
   int8_t initial_ssid;
-
+  // also allow setup via WiFi
+  startWifi();
 
   // set Tx Symbol und die normale SSID - gleich zu Beginn, falls man nur das Symbol ändern möchte
   pos_ssid = 0;
   while (true) {
-    TxSymbol = werte_TxSymbol_symbol[pos_ssid];
     blinker(pos_ssid+1);
     writedisplaytext("  SETUP", "    Symbol",werte_TxSymbol_text[pos_ssid], "", "PRESS KEY to select", "", 0);
     waiter = millis();
     while (millis()<(waiter+1000+initial_waiter)) {
+      dobgstuff();
       if (digitalRead(BUTTON)==LOW) {
         key_pressed = true;
       }
@@ -1361,6 +1392,8 @@ void setup_data(void) {
     if (key_pressed==true) {
       key_pressed = false;
       writedisplaytext("  SETUP", "    Symbol",werte_TxSymbol_text[pos_ssid], "", "programmed", "", 2000);
+      TxSymbol[0] = '/';
+      TxSymbol[1] = werte_TxSymbol_symbol[pos_ssid][0];
       break;
     }
     ++pos_ssid;
@@ -1378,6 +1411,7 @@ void setup_data(void) {
     writedisplaytext("  SETUP", "  normal SSID","   "+Tcall, pfeile, "PRESS KEY to select", "", 0);
     waiter = millis();
     while (millis()<(waiter+1000+initial_waiter)) {
+      dobgstuff();
       if (digitalRead(BUTTON)==LOW) {
         key_pressed = true;
       }
@@ -1399,11 +1433,11 @@ void setup_data(void) {
   key_pressed = false;
   initial_waiter = 2000;
   while (true) {
-    // TxSymbol = werte_TxSymbol_symbol[pos_ssid];
     blinker(2-pos_ssid);
     writedisplaytext("  SETUP", "  stop it?","   "+werte_weiter_symbol[pos_ssid], "", "PRESS KEY to select", "", 0);
     waiter = millis();
     while (millis()<(waiter+1000+initial_waiter)) {
+      dobgstuff();
       if (digitalRead(BUTTON)==LOW) {
         key_pressed = true;
       }
@@ -1433,6 +1467,7 @@ void setup_data(void) {
         }
       }
       while (true) {
+        dobgstuff();
         Tcall.setCharAt(pos_in_string, aktueller_letter);
         writedisplaytext("  SETUP", "     Call","   "+Tcall,"   "+pfeile, "PRESS KEY to select", "", 0);
         waiter = millis();
@@ -1469,6 +1504,7 @@ void setup_data(void) {
       writedisplaytext("  SETUP", "    WX SSID","   "+wxTcall, pfeile, "PRESS KEY to select", "", 0);
       waiter = millis();
       while (millis()<(waiter+1000+initial_waiter)) {
+        dobgstuff();
         if (digitalRead(BUTTON)==LOW) {
           key_pressed = true;
         }
@@ -1503,6 +1539,7 @@ void setup_data(void) {
         writedisplaytext("  SETUP", "    Longitude","  "+LongFixed,"  "+pfeile, "for fixed POS", "PRESS KEY to select", 0);
         waiter = millis();
         while (millis()<(waiter+1000+initial_waiter)) {
+          dobgstuff();
           if (digitalRead(BUTTON)==LOW) {
             key_pressed = true;
           }
@@ -1546,6 +1583,7 @@ void setup_data(void) {
         writedisplaytext("  SETUP", "    Latitude","  "+LatFixed,"  "+pfeile, "for fixed POS", "PRESS KEY to select", 0);
         waiter = millis();
         while (millis()<(waiter+1000+initial_waiter)) {
+          dobgstuff();
           if (digitalRead(BUTTON)==LOW) {
             key_pressed = true;
           }
@@ -1580,6 +1618,7 @@ void setup_data(void) {
   prefs.putString("TxSymbol", TxSymbol);
   prefs.end();
   writedisplaytext("  SETUP", "ALL DONE","", "stored in NVS", "", "", 2000);
+  stopWifi();
 }
 ///////////////////////////////////////////////////////////////////////////////////////
 void blinker(int counter) {
@@ -1606,3 +1645,158 @@ int calc_pressure_offset(int height) {
   return(offset);
 }
 ///////////////////////////////////////////////////////////////////////////////////////
+
+
+// DL9RDZ extensions: functions for WiFi setup
+const char *HTMLHEAD = "<html><head> <meta charset=\"UTF-8\"> <link rel=\"stylesheet\" type=\"text/css\" href=\"style.css\"></head>";
+const char *HTMLBODY = "<body><form class=\"wrapper\" action=\"config.html\" method=\"post\"><div class=\"content\">";
+const char *HTMLEND = "</div></form></body></html>";
+
+const char *STYLE_CSS = "body, html { height: 100\%; margin: 0; font-family: Arial; }\n"
+ "table, th, td { border: 1px solid black; border-collapse: collaps; background-color: #ddd } \n"
+ "td#caption { text-align: center; background-color: #aaa; font-weight: bold; } \n"
+ ".content { display: flex; flex: 1; dlex-direction: column; overflow: auto; height: 100\%; } \n"
+ "html { font-family: Helvetica; display: inline-block; margin: 0px auto; text-align: center; } \n"
+ "p { font-size: 1.5rem; }\n"
+ ".save { background-color: #0f3376; border: black; border-width: 1; color: white; padding: 8px 30px; text-align: center; text-decoration: none; display: block; font-size: 14px; margine: 0 } \n";
+
+struct st_configitems {
+  const char *name;
+  const char *label;
+  char type;
+  union {
+    String *data;
+    uint8_t *cdata;
+  };
+};
+
+
+struct st_configitems config_list[] = {
+  { "tracker_mode", "Tracker mode", 'm', { .cdata = &tracker_mode } },
+  { "MyComment", "Additional APRS comment", 's', &MyComment },
+  { "Tcall", "Callsign", 's', &Tcall },
+  { "wxTcall", "Callsign (WX)", 's', &wxTcall },
+  { "LatFixed", "Fixed latitude", 's', &LatFixed },
+  { "LongFixed", "Fixed longitude", 's', &LongFixed },
+  { "TxSymbol", "APRS Symbol", 's', &TxSymbol },
+  { "SendAlt", "Send altitude (0/1)", 'b', { .cdata = &SendAlt } },
+  { "SendBatt", "Send battery (0/1)", 'b', { .cdata = &SendBatt } },
+};
+const static int N_CONFIG = (sizeof(config_list)/sizeof(struct st_configitems));
+
+char message[8192];
+const char *createConfigForm() {
+  Serial.println("createConfigForm()");
+  char *ptr = message;
+  strcpy(ptr, HTMLHEAD);
+  strcpy(ptr, HTMLBODY);
+  strcat(ptr, "<table><tr><th>Option</th><th>Value</th></tr>\n");
+  for(int i=0; i<N_CONFIG; i++) {
+    ptr += strlen(ptr);
+    sprintf(ptr, "<tr><td>%s</td><td>", config_list[i].label);
+    ptr += strlen(ptr);
+    switch(config_list[i].type) {
+      case 'm': {
+        uint8_t m = *config_list[i].cdata;
+        sprintf(ptr, "<select name=\"CFG%d\">"
+           "<option value=\"0\"%s>Tracker</option>"
+           "<option value=\"1\"%s>WX Tracker</option>"
+           "<option value=\"2\"%s>WX Move</option>"
+           "<option value=\"3\"%s>WX Fixed</option>"
+           "</select></td></tr>\n",
+	   i, m==0?" selected":"", m==1?" selected":"", m==2?" selected":"", m==3?" selected":"");
+        }
+        break;
+      case 's':
+        sprintf(ptr, "<input name=\"CFG%d\" type=\"text\" value=\"%s\"/></td></tr>\n", i, config_list[i].data->c_str() );
+        break;
+      case 'b': {
+	uint8_t m = *config_list[i].cdata;
+	Serial.printf("value for %d is %d\n", i, m);
+	sprintf(ptr, "<select name=\"CFG%d\"><option value=\"1\"%s>On</option><option value=\"0\"%s>Off</option></select></td></tr>\n",
+	  i, m!=0?" selected":"", m==0?"  selected":"");
+	}
+        break;
+    }
+  }
+  strcat(ptr, "</table>");
+  strcat(ptr, "</div><div class=\"footer\"><input type=\"submit\" class=\"save\" value=\"Save changes\"/>");
+  strcat(ptr, HTMLEND);
+  return message;
+}
+
+
+const char *handleConfigPost(AsyncWebServerRequest *request) {
+  Serial.println("Config post request");
+  int params = request->params();
+  prefs.begin("nvs", false);
+  for(int i=0; i < params; i++) {
+    String strlabel = request->getParam(i)->name();
+    const char *label = strlabel.c_str();
+    if(strncmp(label, "CFG", 3) != 0) continue;
+    int idx = atoi(label + 3);
+    if(idx<0 || idx>=N_CONFIG) continue;
+    AsyncWebParameter *value = request->getParam(label, true);
+    if(!value) continue;
+    String strvalue = value->value();
+    Serial.printf("Processing %s=%s\n", config_list[idx].name, strvalue.c_str());
+    switch(config_list[idx].type) {
+      case 's': 
+    	prefs.putString(config_list[idx].name, strvalue);
+ 	break;
+      case 'b':
+	{
+        uint8_t m = strvalue.c_str()[0] - '0';
+    	prefs.putChar(config_list[idx].name, m);
+	}
+	break;
+      case 'm':  // tracker mode
+        {
+        uint8_t m = strvalue.c_str()[0] - '0';
+        prefs.putChar(config_list[idx].name, m);
+        tracker_mode = m;  // TODO: if no ESP.restart() is done, need to enable/disable GPS power depending on mode
+        }
+        break;
+    }
+  }
+  prefs.end();
+  return "";
+}
+
+void SetupAsyncServer() {
+  Serial.println("SetupAsyncServer()\n");
+  server.reset();
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest * request) {
+    request->redirect("/config.html");
+  } );
+  server.on("/config.html", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send(200, "text/html", createConfigForm());
+  } );
+  server.on("/config.html", HTTP_POST, [](AsyncWebServerRequest *request) {
+    handleConfigPost(request);
+    request->send(200, "text/html", "<html><head>OK, rebooting</head><body><h1>Config OK, rebooting T-Beam</h2></body>");
+    delay(2000);
+    ESP.restart();
+  } );
+  server.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send(200, "text/css", STYLE_CSS);
+  } );
+  server.begin();
+}
+
+void startWifi() {
+  WiFi.softAP("loraaprs","");
+  delay(100);
+  WiFi.softAPConfig(IPAddress(192,168,4,1), IPAddress(192,168,4,1), IPAddress(255,255,255,0));
+
+  MDNS.begin("loraaprs");
+  SetupAsyncServer();
+  MDNS.addService("http", "tcp", 80);
+  dnsServer.start(53, "*", WiFi.softAPIP());
+}
+void stopWifi() {
+  MDNS.end();
+  server.reset();
+  WiFi.disconnect(true);
+}
+
