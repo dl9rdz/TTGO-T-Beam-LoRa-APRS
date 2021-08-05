@@ -44,6 +44,26 @@
 #include <SPI.h>
 #include <BG_RF95.h>         // library from OE1ACM
 
+//=== T-Watch specific
+#define LILYGO_WATCH_2019_WITH_TOUCH
+#define LILYGO_WATCH_HAS_S76_S78G
+#define LILYGO_WATCH_LVGL
+#include <LilyGoWatch.h>
+TTGOClass *ttgo;
+TFT_eSPI *tft;
+S7XG_Class *s7xg;
+Ticker btnTicker;
+uint32_t state = 0, prev_state = 0;
+bool isInit = false;
+lv_obj_t *btn2, *btn1, *btn3, *ta1, *gContainer;
+
+#define CHECK_ERROR(ret)        if(ret != S7XG_OK){ Serial.printf("%d failed\n", __LINE__); }
+int ret = 0;
+#define TWATCH
+char buff[256];
+GPS_Class gps(0,0,0,0,0,0,0,0);
+ //===
+
 #include <TinyGPS++.h>
 #include <math.h>
 #ifdef DS18B20
@@ -66,7 +86,8 @@
 #include <Adafruit_SPITFT.h>
 #include <Adafruit_SPITFT_Macros.h>
 #include <gfxfont.h>
-#include <axp20x.h>
+//#include <axp20x.h>
+// contained in t-watch
 
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
@@ -207,7 +228,7 @@ String LatFixed="";
 boolean wx;
 
 //byte arrays
-byte  lora_TXBUFF[128];      //buffer for packet to send
+byte  lora_TXBUFF[4*128];      //buffer for packet to send
 byte  lora_RXBUFF[128];      //buffer for packet to send
 //byte Variables
 byte  lora_TXStart;          //start of packet data in TXbuff
@@ -228,8 +249,8 @@ float BattVolts;
 float average_speed[5] = {0,0,0,0,0}, average_speed_final=0, max_speed=30, min_speed=0;
 float old_course = 0, new_course = 0;
 int point_avg_speed = 0, point_avg_course = 0;
-ulong min_time_to_nextTX=60000L;      // minimum time period between TX = 60000ms = 60secs = 1min
-ulong nextTX=60000L;          // preset time period between TX = 60000ms = 60secs = 1min
+ulong min_time_to_nextTX=20000L;      // minimum time period between TX = 60000ms = 60secs = 1min
+ulong nextTX=20000L;          // preset time period between TX = 60000ms = 60secs = 1min
 #define ANGLE 60              // angle to send packet at smart beaconing
 #define ANGLE_AVGS 3          // angle averaging - x times
 float average_course[ANGLE_AVGS];
@@ -269,7 +290,9 @@ boolean tempsensoravailable=true;
 
 // SoftwareSerial ss(RXPin, TXPin);   // The serial connection to the GPS device
 HardwareSerial ss(1);        // TTGO has HW serial
+#ifndef TWATCH
 TinyGPSPlus gps;             // The TinyGPS++ object
+#endif
 #ifdef T_BEAM_V1_0
   AXP20X_Class axp;
 #endif
@@ -280,7 +303,9 @@ uint8_t len = sizeof(buf);
 
 // Singleton instance of the radio driver
 
+#ifndef TWATCH
 BG_RF95 rf95(18, 26);        // TTGO T-Beam has NSS @ Pin 18 and Interrupt IO @ Pin26
+#endif
 
 // initialize OLED display
 #define OLED_RESET 4         // not used
@@ -314,11 +339,12 @@ void setup()
     wx = false;
   }
 
+  Serial.begin(115200);
+#ifndef TWATCH
   pinMode(TXLED, OUTPUT);
   pinMode(BUTTON, INPUT);
 
   digitalWrite(TXLED, LOW);  // turn blue LED off
-  Serial.begin(115200);
 
   Wire.begin(I2C_SDA, I2C_SCL);
 
@@ -344,6 +370,9 @@ void setup()
      for(;;); // Don't proceed, loop forever
   }
   writedisplaytext("LoRa-APRS","","Init:","Display OK!","","PRESS 3sec for config",1000);
+#else
+  setupTWatch();
+#endif
   Serial.println("LoRa-APRS / Init / Display OK! / PRESS 3sec for config");
 
   #ifndef DONT_USE_FLASH_MEMORY
@@ -415,12 +444,13 @@ void setup()
       break;
   }
 
-    if (!rf95.init()) {
-
+#ifndef TWATCH
+  if (!rf95.init()) {
     writedisplaytext("LoRa-APRS","","Init:","RF95 FAILED!",":-(","",250);
     Serial.println("LoRa-APRS / Init / RF95 FAILED!");
     for(;;); // Don't proceed, loop forever
   }
+#endif
 
   if (max_time_to_nextTX < nextTX) {max_time_to_nextTX=nextTX;}
 
@@ -429,6 +459,7 @@ void setup()
   // digitalWrite(TXLED, LOW);
   Serial.println("LoRa-APRS / Init / RF95 OK!");
 
+#ifndef TWATCH
   if (tracker_mode != WX_FIXED) {
     ss.begin(GPSBaud, SERIAL_8N1, TXPin, RXPin);        //Startup HW serial for GPS
     writedisplaytext("LoRa-APRS","","Init:","GPS Serial OK!","","",250);
@@ -447,12 +478,13 @@ void setup()
     writedisplaytext(" "+Tcall,"","Init:","GPS switched OFF!","","",250);
     Serial.println("LoRa-APRS / Init / GPS switched OFF!");
   }
+#endif
 
   #ifdef T_BEAM_V1_0
     writedisplaytext("LoRa-APRS","","Init:","ADC OK!","BAT: "+String(axp.getBattVoltage()/1000,1),"",250);
     Serial.print("LoRa-APRS / Init / ADC OK! / BAT: ");
     Serial.println(String(axp.getBattVoltage()/1000,1));
-#else
+  #else
     adc1_config_width(ADC_WIDTH_BIT_12);
     adc1_config_channel_atten(ADC1_CHANNEL_7,ADC_ATTEN_DB_6);
     writedisplaytext("LoRa-APRS","","Init:","ADC OK!","BAT: "+String(analogRead(35)*7.221/4096,1),"",250);
@@ -460,9 +492,28 @@ void setup()
     Serial.println(String(analogRead(35)*7.221/4096,1));
   #endif
 
+#ifndef TWATCH
   rf95.setFrequency(433.775);
   rf95.setModemConfig(BG_RF95::Bw125Cr45Sf4096); // hard coded because of double definition
   rf95.setTxPower(5);
+#else
+  double lora_FREQ=433.775;
+  s7xg->loraSetFrequency((int)(lora_FREQ*1000000));
+  delay(200);
+  s7xg->loraSetPower(20);
+  delay(200);
+  s7xg->loraSetSpreadingFactor(12);
+  delay(200);
+  s7xg->loraSetBandWidth(125); // or 125000? TODO
+  delay(200);
+  s7xg->loraSetCodingRate(5);
+  delay(200);
+  s7xg->loraSetSyncWord(0x12);
+  delay(200);
+  s7xg->loraSetCRC(true);
+  delay(200);
+  //s7xg->loraTransmit(lora_TXBUFF);
+#endif
 
   #ifdef DS18B20
     sensors.begin();
@@ -595,12 +646,31 @@ void loop() {
     #endif
   }
 
+#ifndef TWATCH
   if (tracker_mode != WX_FIXED) {
     while (ss.available() > 0) {
       gps.encode(ss.read());
     }
   }
+#else
+  {
+    GPS_Class sgps = s7xg->gpsGetData();
+    if(sgps.isVaild()) { /*sic!*/
+        gps = sgps;
+        tft->setCursor(0, 0);
+        tft->fillRect(0, 0, 240, 50, TFT_BLACK);
+        sprintf(buff, "Location: lat:%.02f lng:%.02f", gps.lat(), gps.lng());
+        tft->println(buff);
+        sprintf(buff, "Date: %d/%d/%d",  gps.year(), gps.month(), gps.day());
+        tft->println(buff);
+        sprintf(buff, "Time: %d:%d:%d",  gps.hour(), gps.minute(), gps.second());
+        tft->println(buff);
+       // TODO
+    }
+  }
+#endif
 
+#ifndef TWATCH
   if (rf95.waitAvailableTimeout(100)) {
   #ifdef SHOW_RX_PACKET                                       // only show RX packets when activitated in config
     if (rf95.recvAPRS(lora_RXBUFF, &len)) {
@@ -615,11 +685,20 @@ void loop() {
     }
   #endif
   }
+#else
+  // RX not yet impl
+#endif
 
   if (tracker_mode != WX_FIXED) {
+#ifndef TWATCH
     LatShown = String(gps.location.lat(),5);
     LongShown = String(gps.location.lng(),5);
+#else
+    LatShown = String(48.8);
+    LongShown = String(13.3);
+#endif
 
+#ifndef TWATCH
     average_speed[point_avg_speed] = gps.speed.kmph();   // calculate smart beaconing
     ++point_avg_speed;
     if (point_avg_speed>4) {point_avg_speed=0;}
@@ -628,10 +707,12 @@ void loop() {
     #ifdef DEBUG
       TxRoot="S";
     #endif
+#endif
 
     if (nextTX < min_time_to_nextTX) {nextTX=min_time_to_nextTX;}
     if (nextTX > max_time_to_nextTX) {nextTX=max_time_to_nextTX;}
 
+#ifndef TWATCH
     average_course[point_avg_course] = gps.course.deg();   // calculate smart beaconing course
     #ifdef DEBUG
       millis_angle[point_avg_course]=millis();
@@ -692,6 +773,7 @@ void loop() {
       }
       old_course = new_course;
     }
+#endif
   } else {
     LatShown = LatFixed;
     LongShown = LongFixed;
@@ -717,14 +799,17 @@ void loop() {
   if ( (lastTX+nextTX) <= millis()  ) {
     if (tracker_mode != WX_FIXED) {
       // if (gps.location.isValid()) {
-      if (gps.location.age() < 2000) {
+      if(1) { // if (gps.location.age() < 2000) {
         digitalWrite(TXLED, HIGH);
+#if 0
         if (hum_temp) {
           writedisplaytext(" ((TX))","","LAT: "+LatShown,"LON: "+LongShown,"SPD: "+String(gps.speed.kmph(),1)+"  CRS: "+String(gps.course.deg(),1),"BAT: "+String(BattVolts,1)+"  HUM: "+String(hum,1),0);
         } else {
           writedisplaytext(" ((TX))","","LAT: "+LatShown,"LON: "+LongShown,"SPD: "+String(gps.speed.kmph(),1)+"  CRS: "+String(gps.course.deg(),1),"SAT: "+String(gps.satellites.value())+"   TEMP: "+String(temp,1),0);
         }
+#endif
         sendpacket();
+#if 0
         Serial.print("((TX)) / LAT: ");
         Serial.print(LatShown);
         Serial.print(" / LON: ");
@@ -757,6 +842,7 @@ void loop() {
         Serial.print(String(temp,1));
         Serial.print(" / HUM: ");
         Serial.println(String(hum,1));
+#endif
       }
     } else {                           // ab hier Code für WX_FIXED
       digitalWrite(TXLED, HIGH);
@@ -780,6 +866,7 @@ void loop() {
       digitalWrite(TXLED, LOW);
     }
   } else {
+#if 0
     if (tracker_mode != WX_FIXED) {
       if (gps.location.age() < 2000) {
         if (hum_temp) {
@@ -801,6 +888,7 @@ void loop() {
         writedisplaytext(" "+wxTcall,"Time to TX: "+String(((lastTX+nextTX)-millis())/1000)+"sec","LAT: "+LatShown,"LON: "+LongShown,"SPD: ---  CRS: ---","SAT: ---  TEMP: "+String(temp,1),0);
       }
     }
+#endif
   }
   smartDelay(900);
 }
@@ -814,8 +902,10 @@ static void smartDelay(unsigned long ms)
   do
   {
     if (tracker_mode != WX_FIXED) {
+#ifndef TWATCH
       while (ss.available())
         gps.encode(ss.read());
+#endif
     }
   } while (millis() - start < ms);
 }
@@ -849,9 +939,15 @@ void recalcGPS(){
   String Speedx, Coursex, Altx;
 
   if (tracker_mode != WX_FIXED) {
+#if 0
     Tlat=gps.location.lat();
     Tlon=gps.location.lng();
     Talt=gps.altitude.meters() * 3.28;
+#else
+    Tlat = gps.lat();
+    Tlon = gps.lng();
+    Talt = 500;
+#endif
     #ifdef USE_BME280
       pressure_offset = calc_pressure_offset(Talt/3.28);
     #endif
@@ -862,8 +958,13 @@ void recalcGPS(){
       Altx += "0";
     }
     Altx += Talt;
+#if 0
     Tcourse=gps.course.deg();
     Tspeed=gps.speed.knots();
+#else
+    Tcourse = 0;
+    Tspeed = 0;
+#endif
 
     aprs_lat = 900000000 - Tlat * 10000000;
     aprs_lat = aprs_lat / 26 - aprs_lat / 2710 + aprs_lat / 15384615;
@@ -1270,17 +1371,17 @@ switch(tracker_mode) {
   case WX_TRACKER:
   case WX_MOVE:
   default:
-    if ( gps.location.isValid()   || gps.location.isUpdated() ) {
+    if ( gps.isVaild() /*gps.location.isValid()   || gps.location.isUpdated() */) {
       recalcGPS();                        //
       Outputstring =outString;
       loraSend(lora_TXStart, lora_TXEnd, 60, 255, 1, 10, TXdbmW, TXFREQ);  //send the packet, data is in TXbuff from lora_TXStart to lora_TXEnd
     }  else {
       Outputstring = (Tcall);
       Outputstring += " No GPS-Fix";
-      Outputstring += " Batt=";
-      Outputstring += String(BattVolts,2);
-      Outputstring += ("V ");
-      loraSend(lora_TXStart, lora_TXEnd, 60, 255, 1, 10, 5, TXFREQ);  //send the packet, data is in TXbuff from lora_TXStart to lora_TXEnd
+      //Outputstring += " Batt=";
+      //Outputstring += String(BattVolts,2);
+      //Outputstring += ("V ");
+      loraSend(lora_TXStart, lora_TXEnd, 60, 255, 1, 10, TXdbmW, TXFREQ);  //send the packet, data is in TXbuff from lora_TXStart to lora_TXEnd
     }
     break;
   }
@@ -1292,31 +1393,74 @@ void loraSend(byte lora_LTXStart, byte lora_LTXEnd, byte lora_LTXPacketType, byt
   byte i;
   byte ltemp;
 
+#ifndef TWATCH
   if (rf95.waitAvailableTimeout(100)) {
     if (rf95.recvAPRS(buf, &len)) {
     }
   }
+#endif
 
   // time of last TX
   lastTX = millis();
 
   ltemp = Outputstring.length();
+  Serial.printf("loraSend: %s\n", Outputstring.c_str());
+#ifdef TWATCH
+  sprintf((char *)lora_TXBUFF, "%02x%02x%02x", '<', 0xff, 0x01);
+  Serial.printf("(prefix: %s)\n", lora_TXBUFF);
+#endif
   for (i = 0; i <= ltemp; i++)
   {
+#ifndef TWATCH
     lora_TXBUFF[i] = Outputstring.charAt(i);
+#else
+    char c = Outputstring.charAt(i);
+    sprintf((char *)lora_TXBUFF+2*i+6, "%02x", c);
+#endif
   }
+  Serial.printf("len of TXBUF is %d\n", strlen((char *)lora_TXBUFF));
 
+#ifndef TWATCH
   i--;
   lora_TXEnd = i;
   lora_TXBUFF[i] ='\0';
+#endif
 
   // digitalWrite(PLED1, HIGH);       //LED on during packet
-
+#ifndef TWATCH
   rf95.setModemConfig(BG_RF95::Bw125Cr45Sf4096);
   rf95.setFrequency(lora_FREQ);
   rf95.setTxPower(lora_LTXPower);
   rf95.sendAPRS(lora_TXBUFF, Outputstring.length());
   rf95.waitPacketSent();
+#else
+#if 1
+  s7xg->loraSetFrequency((int)(lora_FREQ*1000000));
+  delay(200);
+  s7xg->loraSetPower(lora_LTXPower);
+  delay(200);
+  s7xg->loraSetSpreadingFactor(12);
+  delay(200);
+  s7xg->loraSetBandWidth(125); // or 125000? TODO
+  delay(200);
+  s7xg->loraSetCodingRate(5);
+  delay(200);
+  s7xg->loraSetSyncWord(0x12);
+  delay(200);
+  s7xg->loraSetCRC(true);
+  delay(200);
+  Serial.printf("Sending '%s'\n", lora_TXBUFF);
+  s7xg->loraTransmit((char *)lora_TXBUFF);
+  delay(200);
+#else
+  s7xg.setRfFreq((int)(lora_FREQ*1000000));
+  s7xg.setRfBandWidth(125);
+  s7xg.setRfSpreadingFactor(12);
+  s7xg.setRfPower(lora_LTXPower);
+  s7xg.RfSendString("");
+  s7xg.
+#endif
+#endif
 }
 ///////////////////////////////////////////////////////////////////////////////////////
 void batt_read()
@@ -1331,6 +1475,7 @@ void batt_read()
 
 ///////////////////////////////////////////////////////////////////////////////////////
 void writedisplaytext(String HeaderTxt, String Line1, String Line2, String Line3, String Line4, String Line5, int warten) {
+#ifndef TWATCH
   display.clearDisplay();
   display.setTextColor(WHITE);
   display.setTextSize(2);
@@ -1349,6 +1494,14 @@ void writedisplaytext(String HeaderTxt, String Line1, String Line2, String Line3
   display.println(Line5);
   display.display();
   smartDelay(warten);
+#else
+  tft->println(HeaderTxt);
+  tft->println(Line1);
+  tft->println(Line2);
+  tft->println(Line3);
+  tft->println(Line4);
+  tft->println(Line5);
+#endif
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////
@@ -1800,3 +1953,175 @@ void stopWifi() {
   WiFi.disconnect(true);
 }
 
+
+
+void s7xg_gps()
+{
+    if (!isInit) {
+        isInit = true;
+        //stop_prev();
+        s7xg->gpsReset();
+        delay(200);
+        s7xg->gpsSetLevelShift(true);
+        delay(200);
+        s7xg->gpsSetStart();
+        delay(200);
+        s7xg->gpsSetSystem(0);
+        delay(200);
+        s7xg->gpsSetPositioningCycle(1000);
+        delay(200);
+        s7xg->gpsSetPortUplink(20);
+        delay(200);
+        s7xg->gpsSetFormatUplink(1);
+        delay(200);
+        s7xg->gpsSetMode(1);
+        delay(200);
+        Serial.println("Start  s7xg_gps");
+    }
+    static uint32_t timestamp = 0;
+    // Send gps data command every 1 second interval
+    if (millis() - timestamp > 1000) {
+        timestamp = millis();
+        ttgo->hwSerial->print("gps get_data dms");
+    }
+    //Get data directly from the serial port
+    String str = s7xg->loraGetPingPongMessage();
+    delay(200);
+    if (str != "") {
+        //add_message(str.c_str());
+    }
+}
+void createWin()
+{
+    lv_obj_clean(gContainer);
+    ta1 = lv_textarea_create(gContainer, NULL);
+    lv_obj_set_size(ta1, LV_HOR_RES, LV_VER_RES);
+    lv_obj_align(ta1, NULL, LV_ALIGN_CENTER, 0, 0);
+    lv_textarea_set_text(ta1, "");    /*Set an initial text*/
+    lv_textarea_set_max_length(ta1, 128);
+}
+static void event_handler(lv_obj_t *obj, lv_event_t event)
+{
+    if (event != LV_EVENT_CLICKED) return;
+    if (obj == btn1) {
+        state = 1;
+    } else if (obj == btn2) {
+        state = 2;
+    } else if (obj == btn3) {
+        state = 3;
+    }
+    isInit = false;
+    if (!ta1) {
+        createWin();
+    }
+}
+static void  createGui()
+{
+    lv_obj_clean(gContainer);
+
+    ta1 = NULL;
+    lv_obj_t *label ;
+    /*Create a normal button*/
+    btn1 = lv_btn_create(gContainer, NULL);
+    lv_obj_set_size(btn1, 120, 65);
+    lv_obj_align(btn1, NULL, LV_ALIGN_IN_TOP_MID, 0, 10);
+    lv_obj_set_event_cb(btn1, event_handler);
+
+    /*Add a label to the button*/
+    label = lv_label_create(btn1, NULL);
+    lv_label_set_text(label, "Sender");
+
+    btn2 = lv_btn_create(gContainer, btn1);
+    lv_obj_align(btn2, btn1, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
+    lv_obj_set_event_cb(btn2, event_handler);
+
+    label = lv_label_create(btn2, NULL);
+    lv_label_set_text(label, "Receiver");
+
+    btn3 = lv_btn_create(gContainer, btn1);
+    lv_obj_align(btn3, btn2, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
+    lv_obj_set_event_cb(btn3, event_handler);
+
+    label = lv_label_create(btn3, NULL);
+    lv_label_set_text(label, "GPS");
+
+}
+
+void setupTWatch() {
+    ttgo = TTGOClass::getWatch();
+    ttgo->begin();
+    ttgo->tft->fillScreen(TFT_BLACK);
+    ttgo->openBL();
+
+    ttgo->lvgl_begin();
+
+    //! Open s7xg chip power
+    ttgo->enableLDO4();
+    //! Open s7xg gps reset power
+    ttgo->enableLDO3();
+
+    ttgo->s7xg_begin();
+    s7xg = ttgo->s7xg;
+
+#if 1
+    tft = ttgo->tft;
+    tft->fillScreen(TFT_BLUE);
+    tft->setTextFont(2);
+    tft->println("Begin S7XG Module");
+
+#else
+    gContainer = lv_cont_create(lv_scr_act(), NULL);
+    lv_obj_set_size(gContainer,  LV_HOR_RES, LV_VER_RES);
+    // lv_obj_set_style(gContainer, &lv_style_transp_fit);
+
+    lv_obj_t *label = lv_label_create(gContainer, NULL);
+    lv_label_set_text(label, "Begin S7xG");
+    lv_obj_align(label, NULL, LV_ALIGN_CENTER, 0, 0);
+    //createGui();
+#endif
+
+    auto hwstr = s7xg->getHardWareModel();
+    int len = 0;
+    int retry = 0;
+    do {
+        //lv_task_handler();
+        auto hwstr = s7xg->getHardWareModel();
+        len = hwstr.length();
+        if (len == 0 && retry++ == 5) {
+            s7xg->reset();
+            retry = 0;
+            Serial.println("Reset s7xg chip");
+        } else {
+	  Serial.print("HW: "); Serial.println(hwstr);
+        }
+        if (len == 0)
+            delay(1000);
+    } while (len == 0);
+    delay(300);
+
+    Serial.println("Found s7xg module,Start gps module");
+
+    s7xg->gpsReset();
+    delay(300);
+    s7xg->gpsSetLevelShift(true);
+    delay(300);
+    s7xg->gpsSetStart();
+    delay(300);
+    s7xg->gpsSetSystem(0);
+    delay(300);
+    s7xg->gpsSetPositioningCycle(1000);
+    delay(300);
+    s7xg->gpsSetPortUplink(20);
+    delay(300);
+    s7xg->gpsSetFormatUplink(1);
+    delay(300);
+    s7xg->gpsSetMode(1);
+    delay(300);
+
+    //ttgo->button->setPressedHandler(pressed);
+
+
+    btnTicker.attach_ms(30, []() {
+        ttgo->button->loop();
+    });
+}
