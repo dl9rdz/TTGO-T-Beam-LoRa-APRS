@@ -286,6 +286,57 @@ BG_RF95 rf95(18, 26);        // TTGO T-Beam has NSS @ Pin 18 and Interrupt IO @ 
 #define OLED_RESET 4         // not used
 Adafruit_SSD1306 display(128, 64, &Wire, OLED_RESET);
 
+// Set HAB mode (airborne mode for ublox GPS)
+// see https://www.u-blox.com/sites/default/files/products/documents/u-blox6_ReceiverDescrProtSpec_%28GPS.G6-SW-10018%29_Public.pdf
+// 2.1 Platform settings: Dynamic Platfrom Model "Airborne <1g" needed for alt > 12000m
+#define UBX_HEAD1 0xB5
+#define UBX_HEAD2 0x62
+uint8_t ubx_cfg_nav5[] = { UBX_HEAD1, UBX_HEAD2, 0x06, 0x24, 36, 0, // 
+			0x01, 0x00,    // mask: only set dynmodel parameter
+			6,	       // 6: Airborne with <1g acceleration
+		        0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+			0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+			0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+			0, 0, 0 };      // everything else left at 0
+uint8_t ubx_cfg_nav5_poll[] = { UBX_HEAD1, UBX_HEAD2, 0x06, 0x24, 0, 0 };
+void ubx_send_message(uint8_t *message) {
+    int len = message[4] + ((int)message[5]<<8) + 6;  // 2 byte SYNC_HEAD + 2 byte command id + 2 byte length + data
+    Serial.printf("Sending len %d\n", len);
+    ss.write(message, len);
+    uint8_t crca=0, crcb=0;
+    for(int i=0; i<len-2; i++) {
+	crca += message[2+i];
+	crcb += crca;
+    }
+    ss.write(crca);
+    ss.write(crcb);
+}
+void ubx_receive_message() {
+    int t = millis();
+    int state = 0;
+    int len = -1;
+    while( millis() - t < 5000 ) {  // timeout after 5 sec w/o response
+      if(ss.available()) {
+         uint8_t c = ss.read();
+         if(state == 0 ) {
+	    if( c == UBX_HEAD1) { state++; }
+	    else Serial.printf("%c",c); 
+         }
+	 else if (state == 1 && c == UBX_HEAD2) { state++; Serial.println("GPS: header received"); }
+	 else if (state == 2 || state == 3) { state++; Serial.printf("[%0x] ", c); }
+	 else if (state == 4) { state++; len = (int)c; Serial.printf(" [Payload len: %d] ", len); }
+         else { Serial.printf("[%0x] ", c); if(len==0) break; else len--;  }
+      }
+    }
+}
+void ubx_hab_init() {
+    ubx_send_message(ubx_cfg_nav5);
+    ubx_receive_message();   // expected response: 5, 1, 2, 0, 0x06, 0x24 (ACK-ACK, len=2, ack for 0x06 0x24)
+    //ubx_send_message(ubx_cfg_nav5_poll);
+    //ubx_receive_message();   // expected response: 0x06 0x24 36 0 0xff 0xff 6 ...
+}
+
+
 // +---------------------------------------------------------------------+//
 // + SETUP --------------------------------------------------------------+//
 // +---------------------------------------------------------------------+//
@@ -443,6 +494,7 @@ void setup()
     }
     writedisplaytext(" "+Tcall,"","Init:","Data from GPS OK!","","",250);
     Serial.println("LoRa-APRS / Init / Data from GPS OK!");
+    ubx_hab_init();
   } else {
     writedisplaytext(" "+Tcall,"","Init:","GPS switched OFF!","","",250);
     Serial.println("LoRa-APRS / Init / GPS switched OFF!");

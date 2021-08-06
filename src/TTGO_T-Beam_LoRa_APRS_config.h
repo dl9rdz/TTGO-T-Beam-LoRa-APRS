@@ -34,8 +34,8 @@
 // first released version
 
 // SET HW version
-// #define T_BEAM_V1_0    // use this for newer Boards AKA Rev1 (second board release)
-#define T_BEAM_V0_7    // use this for older Boards AKA Rev0.x (first board release)
+#define T_BEAM_V1_0    // use this for newer Boards AKA Rev1 (second board release)
+///#define T_BEAM_V0_7    // use this for older Boards AKA Rev0.x (first board release)
 
 // SET temperature sensor type
 // #define DS18B20    // use this if you use DS18B20, default is DHT22
